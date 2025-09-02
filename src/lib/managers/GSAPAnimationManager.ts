@@ -5,7 +5,15 @@ import { assColorToCss } from '../utils';
 // GSAP 기반 애니메이션 관리자 클래스
 export class GSAPAnimationManager {
   private activeAnimations = new Map<string, gsap.core.Timeline>();
-  private waveAnimations = new Map<string, { element: HTMLElement, charPhase: number, bounceRange: number, startTime: number, duration: number }>();
+  private waveAnimations = new Map<string, { 
+    element: HTMLElement, 
+    charPhase: number, 
+    bounceRange: number, 
+    startTime: number, 
+    duration: number,
+    preRoll?: number,
+    peakPosition?: number 
+  }>();
 
   createBouncingAnimation(
     element: HTMLElement,
@@ -46,9 +54,17 @@ export class GSAPAnimationManager {
     
     const animationDuration = (popAnimationData.scale_up_duration_ms + popAnimationData.scale_down_duration_ms) / 1000;
     
+    // Get pre-roll and peak position from bouncing animation config
+    const preRoll = (bouncingAnimation as any).pre_roll_ms ? (bouncingAnimation as any).pre_roll_ms / 1000 : 0;
+    const peakPosition = (bouncingAnimation as any).peak_position || 0.25;
+    
+    // Adjust start time with animation offset if provided
+    const animationStartOffset = (bouncingAnimation as any).animation_start_offset || 0;
+    const adjustedStartTime = startTime + animationStartOffset;
+    
     // DEBUG: bouncing 범위 확인
     if (wordText === "Hello") {
-      console.log(`[WAVE_CALC] ${char}(${charIndex}): bounceRange=${bounceRange.toFixed(1)}px, phase=${(charPhase * 180/Math.PI).toFixed(0)}°, duration=${animationDuration.toFixed(2)}s`);
+      console.log(`[WAVE_CALC] ${char}(${charIndex}): bounceRange=${bounceRange.toFixed(1)}px, phase=${(charPhase * 180/Math.PI).toFixed(0)}°, duration=${animationDuration.toFixed(2)}s, preRoll=${preRoll.toFixed(2)}s`);
     }
     
     // 웨이브 애니메이션 데이터 저장 (비디오 시간 기반 계산용)
@@ -56,8 +72,10 @@ export class GSAPAnimationManager {
       element,
       charPhase,
       bounceRange,
-      startTime,
-      duration: animationDuration
+      startTime: adjustedStartTime,
+      duration: animationDuration,
+      preRoll,
+      peakPosition
     });
     
     // 초기 위치 설정만
@@ -107,13 +125,23 @@ export class GSAPAnimationManager {
   // 비디오 시간 기반으로 웨이브 애니메이션 업데이트
   updateWaveAnimations(videoTime: number) {
     this.waveAnimations.forEach((data, id) => {
-      const { element, charPhase, bounceRange, startTime, duration } = data;
+      const { element, charPhase, bounceRange, startTime, duration, preRoll = 0, peakPosition = 0.25 } = data;
       const elapsed = videoTime - startTime;
       
-      if (elapsed >= 0 && elapsed <= duration) {
-        const progress = elapsed / duration;
+      // Include pre-roll in the animation timeline
+      const totalDuration = duration + preRoll;
+      const adjustedElapsed = elapsed + preRoll;
+      
+      if (elapsed >= -preRoll && elapsed <= duration) {
+        // Calculate progress considering pre-roll
+        const progress = Math.max(0, Math.min(1, adjustedElapsed / duration));
+        
+        // Adjust wave position to ensure peak occurs at peakPosition
         const waveCycles = 0.5;
-        const wavePosition = progress * waveCycles * Math.PI * 2;
+        // Shift the wave so that the peak occurs at peakPosition
+        const phaseShift = -peakPosition * Math.PI * 2 * waveCycles;
+        const wavePosition = (progress * waveCycles * Math.PI * 2) + phaseShift;
+        
         // baseline 위로만 움직이도록 Math.abs 사용, 제곱 감쇄로 빠른 소멸
         const sineValue = Math.abs(Math.sin(wavePosition + charPhase));
         const damping = Math.pow(1 - progress, 2); // 제곱 감쇄
