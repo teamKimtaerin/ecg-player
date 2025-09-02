@@ -623,7 +623,8 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'flex-end',
-              overflow: 'hidden'
+              overflow: 'visible' // Loud effect 등이 work_area를 넘어갈 수 있도록 허용
+              // position: absolute로 인해 caption box들의 positioning context 역할
             }}
           >
             {/* 개별 Caption Box 렌더링 - layout_settings 기반 */}
@@ -668,12 +669,20 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               
               let segments = segmentCacheRef.current.get(cacheKey);
               if (!segments) {
-                // Caption box의 실제 너비 계산 (픽셀 단위)
+                // Work area 기반 caption box 최대 너비 계산
                 const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
-                const maxWidthPercent = safetyMargins 
+                // Work area의 실제 너비 계산 (left/right margin 고려)
+                const workAreaWidthPercent = safetyMargins 
                   ? (100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100))
                   : 90;
-                const captionBoxMaxWidth = actualSize.width * (maxWidthPercent / 100) - (actualSize.width * 0.04); // 패딩 제외
+                const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
+
+                // Caption box padding 계산
+                const horizontalPadding = timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
+                const captionBoxPadding = workAreaWidth * (horizontalPadding / 100) * 2; // 양쪽 padding
+
+                // Caption box의 최대 너비 (work area 내에서)
+                const captionBoxMaxWidth = workAreaWidth - captionBoxPadding;
                 
                 // 세그먼트 분할
                 segments = [];
@@ -781,7 +790,8 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               
               // 동시에 발화하는 다른 화자가 있는지 확인 (sync offset 적용)
               const overlappingEvents = currentEvents.preReading.filter(event => {
-                if (event === currentEvent) return false;
+                // 같은 화자의 이벤트는 제외 (같은 이벤트이거나 같은 speaker_id)
+                if (event === currentEvent || event.speaker_id === currentEvent.speaker_id) return false;
                 const eventStart = event.pre_reading.start;
                 const eventEnd = event.pre_reading.end;
                 const adjustedTimeCheck = currentTime - syncOffset;
@@ -795,9 +805,111 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               
               if (overlappingEvents.length > 0) {
                 // 겹치는 화자가 있으면 상단과 하단 사용
-                // 겹치는 이벤트도 같은 방식으로 세그먼트 처리 필요 (간단히 처리)
-                lineGroups[0] = [overlappingEvents[0]]; // 첫 번째 겹치는 화자는 상단
-                lineGroups[1] = [displayEvent]; // 현재 이벤트는 하단 (세그먼트 적용)
+                const overlappingEvent = overlappingEvents[0];
+                
+                // 상단 박스용 overlapping event도 세그먼트 처리
+                const overlappingCacheKey = `${overlappingEvent.event_id}_${actualSize.width}_${actualSize.height}`;
+                let overlappingSegments = segmentCacheRef.current.get(overlappingCacheKey);
+                
+                if (!overlappingSegments) {
+                  // Work area 기반 caption box 최대 너비 계산 (현재 이벤트와 동일한 로직)
+                  const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
+                  const workAreaWidthPercent = safetyMargins 
+                    ? (100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100))
+                    : 90;
+                  const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
+                  const horizontalPadding = timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
+                  const captionBoxPadding = workAreaWidth * (horizontalPadding / 100) * 2;
+                  const captionBoxMaxWidth = workAreaWidth - captionBoxPadding;
+                  
+                  // 세그먼트 분할
+                  overlappingSegments = [];
+                  let currentSegment = [];
+                  let estimatedWidth = 0;
+                  const fontSize = 5 * (actualSize.height / 100);
+                  const charWidth = fontSize * 0.6;
+                  
+                  for (const word of overlappingEvent.active_speech_words) {
+                    const wordWidth = (word.word.length + 1) * charWidth;
+                    if (estimatedWidth + wordWidth <= captionBoxMaxWidth) {
+                      currentSegment.push(word);
+                      estimatedWidth += wordWidth;
+                    } else {
+                      if (currentSegment.length > 0) {
+                        overlappingSegments.push([...currentSegment]);
+                      }
+                      currentSegment = [word];
+                      estimatedWidth = wordWidth;
+                    }
+                  }
+                  if (currentSegment.length > 0) {
+                    overlappingSegments.push(currentSegment);
+                  }
+                  
+                  segmentCacheRef.current.set(overlappingCacheKey, overlappingSegments);
+                }
+                
+                // 상단 박스용 현재 세그먼트 결정
+                let overlappingWordsToDisplay = [];
+                let overlappingSegmentIndex = 0;
+                
+                if (overlappingSegments && overlappingSegments.length > 0) {
+                  const previousIndex = currentSegmentIndexRef.current.get(overlappingCacheKey) || 0;
+                  const adjustedTimeForOverlapping = currentTime - syncOffset;
+                  
+                  const hasActiveWordInOverlapping = overlappingEvent.active_speech_words.some(word => 
+                    adjustedTimeForOverlapping >= word.start && adjustedTimeForOverlapping <= word.end
+                  );
+                  
+                  if (!hasActiveWordInOverlapping) {
+                    overlappingSegmentIndex = previousIndex;
+                    const firstWordOfFirstSegment = overlappingSegments[0]?.[0];
+                    if (firstWordOfFirstSegment && adjustedTimeForOverlapping < firstWordOfFirstSegment.start) {
+                      overlappingSegmentIndex = 0;
+                    }
+                    overlappingWordsToDisplay = overlappingSegments[overlappingSegmentIndex] || [];
+                  } else {
+                    let foundSegmentIndex = -1;
+                    for (let i = 0; i < overlappingSegments.length; i++) {
+                      const segment = overlappingSegments[i];
+                      const hasActiveWordInSegment = segment.some(segWord => 
+                        adjustedTimeForOverlapping >= segWord.start && adjustedTimeForOverlapping <= segWord.end
+                      );
+                      if (hasActiveWordInSegment) {
+                        foundSegmentIndex = i;
+                        break;
+                      }
+                    }
+                    
+                    if (foundSegmentIndex !== -1) {
+                      overlappingSegmentIndex = foundSegmentIndex;
+                    } else {
+                      if (previousIndex < overlappingSegments.length) {
+                        const previousSegment = overlappingSegments[previousIndex];
+                        const lastWordInPrevSegment = previousSegment[previousSegment.length - 1];
+                        if (lastWordInPrevSegment && adjustedTimeForOverlapping > lastWordInPrevSegment.end) {
+                          overlappingSegmentIndex = Math.min(previousIndex + 1, overlappingSegments.length - 1);
+                        } else {
+                          overlappingSegmentIndex = previousIndex;
+                        }
+                      } else {
+                        overlappingSegmentIndex = 0;
+                      }
+                    }
+                    overlappingWordsToDisplay = overlappingSegments[overlappingSegmentIndex] || [];
+                  }
+                  
+                  currentSegmentIndexRef.current.set(overlappingCacheKey, overlappingSegmentIndex);
+                }
+                
+                // 상단 박스용 displayEvent 생성
+                const overlappingDisplayEvent = {
+                  ...overlappingEvent,
+                  active_speech_words: overlappingWordsToDisplay
+                };
+                
+                lineGroups[0] = [overlappingDisplayEvent]; // 상단 박스 (세그먼트 적용)
+                lineGroups[1] = [displayEvent]; // 하단 박스 (세그먼트 적용)
               } else {
                 // 겹치는 화자가 없으면 하단만 사용
                 lineGroups[1] = [displayEvent];
@@ -809,15 +921,9 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 const captionBox = timingData?.layout_settings?.caption_boxes?.[lineIndex];
                 if (!captionBox) return null;
                 
-                // Safe area width 계산 (safety_margins 사용)
-                const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
-                let maxWidth = '90%'; // 기본값
-                
-                if (safetyMargins) {
-                  // 좌우 safety margin을 제외한 실제 사용 가능한 너비 계산
-                  const availableWidthPercent = 100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100);
-                  maxWidth = `${availableWidthPercent}%`;
-                }
+                // Caption box maxWidth: work_area의 100% 사용
+                // work_area가 이미 safety margin을 적용했으므로
+                let maxWidth = '100%';
                 
                 return (
                   <div
@@ -832,7 +938,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                       maxWidth: maxWidth,
                       height: `${captionBox.height * actualSize.height / 100}px`, // Convert to pixels based on screen height
                       display: 'inline-flex', // Changed to inline-flex to fit content width
-                      alignItems: 'flex-end', // Align to bottom to maintain baseline
+                      alignItems: 'flex-end', // 하단 고정으로 baseline 유지
                       justifyContent: 'center', // Horizontal center
                       flexWrap: 'nowrap', // No wrapping
                       backgroundColor: `rgba(0, 0, 0, ${(timingData?.layout_settings?.caption_box_style?.background_opacity ?? 90) / 100})`,
@@ -844,7 +950,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                       fontFamily: '"Roboto Flex Variable", "Roboto Flex", sans-serif',
                       fontSize: `${(timingData?.layout_settings?.caption_box_style?.baseline_font_size_percent ?? 5) * (actualSize.height / 100)}px`,
                       color: 'white',
-                      lineHeight: 1.2,
+                      lineHeight: 1, // 글자 크기 증가가 위로만 확장되도록
                       textAlign: 'center',
                       boxShadow: '0 2px 8px rgba(0, 0, 0, 0.4)'
                     }}
@@ -1383,17 +1489,18 @@ const CharacterWithBounce: React.FC<{
     const charElement = charRef.current;
     if (!charElement) return;
     
-    // 각 글자의 개별 타이밍 사용
+    // 각 글자의 개별 타이밍 사용 - bouncing이면 peak_time, 아니면 pronunciation_start
     const charTiming = wordData.bouncing_animation?.character_timings?.[charIndex];
-    const charStartTime = charTiming?.start_time ?? wordData.pronunciation_start;
+    const colorTransitionTime = charTiming?.peak_time ?? 
+      (wordData.pronunciation_start || wordData.start);
     
     // Apply sync offset to color transition timing
     const adjustedTime = currentTime - syncOffset;
-    const shouldTransitionColor = adjustedTime >= charStartTime;
+    const shouldTransitionColor = adjustedTime >= colorTransitionTime;
     
     // 중복 색상 전환 방지
-    if (shouldTransitionColor && lastColorTransitionRef.current !== charStartTime) {
-      lastColorTransitionRef.current = charStartTime;
+    if (shouldTransitionColor && lastColorTransitionRef.current !== colorTransitionTime) {
+      lastColorTransitionRef.current = colorTransitionTime;
       
       const colorAnimation = animationManager.createColorTransition(
         charElement,
@@ -1408,12 +1515,13 @@ const CharacterWithBounce: React.FC<{
   // 초기 색상 설정 (글자 단위)
   const currentColor = useMemo(() => {
     const charTiming = wordData.bouncing_animation?.character_timings?.[charIndex];
-    const charStartTime = charTiming?.start_time ?? wordData.pronunciation_start;
+    const colorTransitionTime = charTiming?.peak_time ?? 
+      (wordData.pronunciation_start || wordData.start);
     
     // Apply sync offset for color determination
     const adjustedTime = currentTime - syncOffset;
     
-    if (adjustedTime >= charStartTime) {
+    if (adjustedTime >= colorTransitionTime) {
       return assColorToCss(wordData.color_transition.to_color);
     }
     return assColorToCss(wordData.color_transition.from_color);
