@@ -325,6 +325,8 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
   const [containerSize, setContainerSize] = useState({ width, height });
   const segmentCacheRef = useRef<Map<string, any[][]>>(new Map());
   const currentSegmentIndexRef = useRef<Map<string, number>>(new Map());
+  // 이벤트별 박스 위치 추적 (event_id -> box_index: 0=상단, 1=하단)
+  const eventBoxPositionRef = useRef<Map<string, number>>(new Map());
 
   // 현재 시간에 해당하는 이벤트들 찾기 (sync offset 적용)
   const getCurrentEvents = useCallback((time: number) => {
@@ -351,6 +353,37 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     return { preReading, activeWords };
   }, [timingData, syncOffset]);
 
+  // 종료된 이벤트들의 박스 위치 정보 정리
+  const cleanupFinishedEvents = useCallback((currentTime: number) => {
+    if (!timingData) return;
+    
+    const adjustedTime = currentTime - syncOffset;
+    const activeEventIds = new Set<string>();
+    
+    // 현재 활성화된 이벤트들의 ID 수집
+    timingData.sync_events.forEach(event => {
+      const eventStart = event.pre_reading.start;
+      const eventEnd = event.pre_reading.end;
+      if (adjustedTime >= eventStart && adjustedTime <= eventEnd) {
+        activeEventIds.add(event.event_id);
+      }
+    });
+    
+    // 더 이상 활성화되지 않은 이벤트들의 박스 위치 정보 제거
+    const currentBoxPositions = eventBoxPositionRef.current;
+    const keysToDelete: string[] = [];
+    
+    currentBoxPositions.forEach((boxIndex, eventId) => {
+      if (!activeEventIds.has(eventId)) {
+        keysToDelete.push(eventId);
+      }
+    });
+    
+    keysToDelete.forEach(eventId => {
+      currentBoxPositions.delete(eventId);
+    });
+  }, [timingData, syncOffset]);
+
   // requestVideoFrameCallback을 사용한 프레임 정밀 동기화
   const videoFrameCallbackRef = useRef<number>();
   
@@ -361,6 +394,9 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     const currentTime = video.currentTime;
     setCurrentTime(currentTime);
     
+    // 종료된 이벤트들의 박스 위치 정보 정리
+    cleanupFinishedEvents(currentTime);
+    
     // 웨이브 애니메이션 업데이트
     animationManagerRef.current.updateWaveAnimations(currentTime);
     
@@ -368,7 +404,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     if (isPlaying) {
       videoFrameCallbackRef.current = (video as any).requestVideoFrameCallback(updateVideoFrame);
     }
-  }, [isPlaying]);
+  }, [isPlaying, cleanupFinishedEvents]);
   
   // 컴포너트 언마운트시 GSAP 애니메이션 정리
   useEffect(() => {
@@ -798,21 +834,24 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 return adjustedTimeCheck >= eventStart && adjustedTimeCheck <= eventEnd;
               });
               
-              // Caption box 할당 로직
+              // Caption box 할당 로직 - 위치 고정 방식
               const lineGroups: SyncEvent[][] = [];
               lineGroups[0] = []; // 상단 box 초기화
               lineGroups[1] = []; // 하단 box 초기화
               
-              if (overlappingEvents.length > 0) {
-                // 겹치는 화자가 있으면 상단과 하단 사용
-                const overlappingEvent = overlappingEvents[0];
+              // 현재 활성화된 모든 이벤트 수집
+              const allActiveEvents = [currentEvent, ...overlappingEvents];
+              
+              // 각 이벤트에 대해 세그먼트 처리 및 박스 할당
+              const eventDisplayData: Array<{event: SyncEvent, displayEvent: SyncEvent, assignedBox?: number}> = [];
+              
+              for (const event of allActiveEvents) {
+                // 세그먼트 처리 (기존 로직 재사용)
+                const eventCacheKey = `${event.event_id}_${actualSize.width}_${actualSize.height}`;
+                let eventSegments = segmentCacheRef.current.get(eventCacheKey);
                 
-                // 상단 박스용 overlapping event도 세그먼트 처리
-                const overlappingCacheKey = `${overlappingEvent.event_id}_${actualSize.width}_${actualSize.height}`;
-                let overlappingSegments = segmentCacheRef.current.get(overlappingCacheKey);
-                
-                if (!overlappingSegments) {
-                  // Work area 기반 caption box 최대 너비 계산 (현재 이벤트와 동일한 로직)
+                if (!eventSegments) {
+                  // Work area 기반 caption box 최대 너비 계산
                   const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
                   const workAreaWidthPercent = safetyMargins 
                     ? (100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100))
@@ -823,57 +862,57 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                   const captionBoxMaxWidth = workAreaWidth - captionBoxPadding;
                   
                   // 세그먼트 분할
-                  overlappingSegments = [];
+                  eventSegments = [];
                   let currentSegment = [];
                   let estimatedWidth = 0;
                   const fontSize = 5 * (actualSize.height / 100);
                   const charWidth = fontSize * 0.6;
                   
-                  for (const word of overlappingEvent.active_speech_words) {
+                  for (const word of event.active_speech_words) {
                     const wordWidth = (word.word.length + 1) * charWidth;
                     if (estimatedWidth + wordWidth <= captionBoxMaxWidth) {
                       currentSegment.push(word);
                       estimatedWidth += wordWidth;
                     } else {
                       if (currentSegment.length > 0) {
-                        overlappingSegments.push([...currentSegment]);
+                        eventSegments.push([...currentSegment]);
                       }
                       currentSegment = [word];
                       estimatedWidth = wordWidth;
                     }
                   }
                   if (currentSegment.length > 0) {
-                    overlappingSegments.push(currentSegment);
+                    eventSegments.push(currentSegment);
                   }
                   
-                  segmentCacheRef.current.set(overlappingCacheKey, overlappingSegments);
+                  segmentCacheRef.current.set(eventCacheKey, eventSegments);
                 }
                 
-                // 상단 박스용 현재 세그먼트 결정
-                let overlappingWordsToDisplay = [];
-                let overlappingSegmentIndex = 0;
+                // 현재 세그먼트 결정 (기존 로직 재사용)
+                let wordsToDisplay = [];
+                let segmentIndex = 0;
                 
-                if (overlappingSegments && overlappingSegments.length > 0) {
-                  const previousIndex = currentSegmentIndexRef.current.get(overlappingCacheKey) || 0;
-                  const adjustedTimeForOverlapping = currentTime - syncOffset;
+                if (eventSegments && eventSegments.length > 0) {
+                  const previousIndex = currentSegmentIndexRef.current.get(eventCacheKey) || 0;
+                  const adjustedTimeForEvent = currentTime - syncOffset;
                   
-                  const hasActiveWordInOverlapping = overlappingEvent.active_speech_words.some(word => 
-                    adjustedTimeForOverlapping >= word.start && adjustedTimeForOverlapping <= word.end
+                  const hasActiveWordInEvent = event.active_speech_words.some(word => 
+                    adjustedTimeForEvent >= word.start && adjustedTimeForEvent <= word.end
                   );
                   
-                  if (!hasActiveWordInOverlapping) {
-                    overlappingSegmentIndex = previousIndex;
-                    const firstWordOfFirstSegment = overlappingSegments[0]?.[0];
-                    if (firstWordOfFirstSegment && adjustedTimeForOverlapping < firstWordOfFirstSegment.start) {
-                      overlappingSegmentIndex = 0;
+                  if (!hasActiveWordInEvent) {
+                    segmentIndex = previousIndex;
+                    const firstWordOfFirstSegment = eventSegments[0]?.[0];
+                    if (firstWordOfFirstSegment && adjustedTimeForEvent < firstWordOfFirstSegment.start) {
+                      segmentIndex = 0;
                     }
-                    overlappingWordsToDisplay = overlappingSegments[overlappingSegmentIndex] || [];
+                    wordsToDisplay = eventSegments[segmentIndex] || [];
                   } else {
                     let foundSegmentIndex = -1;
-                    for (let i = 0; i < overlappingSegments.length; i++) {
-                      const segment = overlappingSegments[i];
+                    for (let i = 0; i < eventSegments.length; i++) {
+                      const segment = eventSegments[i];
                       const hasActiveWordInSegment = segment.some(segWord => 
-                        adjustedTimeForOverlapping >= segWord.start && adjustedTimeForOverlapping <= segWord.end
+                        adjustedTimeForEvent >= segWord.start && adjustedTimeForEvent <= segWord.end
                       );
                       if (hasActiveWordInSegment) {
                         foundSegmentIndex = i;
@@ -882,37 +921,69 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                     }
                     
                     if (foundSegmentIndex !== -1) {
-                      overlappingSegmentIndex = foundSegmentIndex;
+                      segmentIndex = foundSegmentIndex;
                     } else {
-                      if (previousIndex < overlappingSegments.length) {
-                        const previousSegment = overlappingSegments[previousIndex];
+                      if (previousIndex < eventSegments.length) {
+                        const previousSegment = eventSegments[previousIndex];
                         const lastWordInPrevSegment = previousSegment[previousSegment.length - 1];
-                        if (lastWordInPrevSegment && adjustedTimeForOverlapping > lastWordInPrevSegment.end) {
-                          overlappingSegmentIndex = Math.min(previousIndex + 1, overlappingSegments.length - 1);
+                        if (lastWordInPrevSegment && adjustedTimeForEvent > lastWordInPrevSegment.end) {
+                          segmentIndex = Math.min(previousIndex + 1, eventSegments.length - 1);
                         } else {
-                          overlappingSegmentIndex = previousIndex;
+                          segmentIndex = previousIndex;
                         }
                       } else {
-                        overlappingSegmentIndex = 0;
+                        segmentIndex = 0;
                       }
                     }
-                    overlappingWordsToDisplay = overlappingSegments[overlappingSegmentIndex] || [];
+                    wordsToDisplay = eventSegments[segmentIndex] || [];
                   }
                   
-                  currentSegmentIndexRef.current.set(overlappingCacheKey, overlappingSegmentIndex);
+                  currentSegmentIndexRef.current.set(eventCacheKey, segmentIndex);
                 }
                 
-                // 상단 박스용 displayEvent 생성
-                const overlappingDisplayEvent = {
-                  ...overlappingEvent,
-                  active_speech_words: overlappingWordsToDisplay
+                // displayEvent 생성
+                const eventDisplayEvent = {
+                  ...event,
+                  active_speech_words: wordsToDisplay
                 };
                 
-                lineGroups[0] = [overlappingDisplayEvent]; // 상단 박스 (세그먼트 적용)
-                lineGroups[1] = [displayEvent]; // 하단 박스 (세그먼트 적용)
-              } else {
-                // 겹치는 화자가 없으면 하단만 사용
-                lineGroups[1] = [displayEvent];
+                eventDisplayData.push({
+                  event,
+                  displayEvent: eventDisplayEvent
+                });
+              }
+              
+              // 박스 할당: 기존 위치가 있으면 유지, 없으면 새로 할당
+              const boxOccupancy = [false, false]; // [상단, 하단] 점유 상태
+              
+              // 1단계: 기존에 박스 위치가 할당된 이벤트들 먼저 배치
+              for (const item of eventDisplayData) {
+                const existingBoxIndex = eventBoxPositionRef.current.get(item.event.event_id);
+                if (existingBoxIndex !== undefined && existingBoxIndex >= 0 && existingBoxIndex <= 1) {
+                  lineGroups[existingBoxIndex] = [item.displayEvent];
+                  boxOccupancy[existingBoxIndex] = true;
+                  item.assignedBox = existingBoxIndex;
+                }
+              }
+              
+              // 2단계: 새로운 이벤트들을 빈 박스에 할당 (하단 우선)
+              for (const item of eventDisplayData) {
+                if (item.assignedBox === undefined) {
+                  // 하단(1) 먼저 시도, 그 다음 상단(0)
+                  let assignedBoxIndex = -1;
+                  if (!boxOccupancy[1]) {
+                    assignedBoxIndex = 1; // 하단
+                  } else if (!boxOccupancy[0]) {
+                    assignedBoxIndex = 0; // 상단
+                  }
+                  
+                  if (assignedBoxIndex !== -1) {
+                    lineGroups[assignedBoxIndex] = [item.displayEvent];
+                    boxOccupancy[assignedBoxIndex] = true;
+                    eventBoxPositionRef.current.set(item.event.event_id, assignedBoxIndex);
+                    item.assignedBox = assignedBoxIndex;
+                  }
+                }
               }
               
               // 각 라인별로 개별 caption box 렌더링
