@@ -2,11 +2,15 @@
   "name": "ecg-player",
   "version": "1.0.0",
   "description": "ECG Player - A React component for Caption With Intention, an advanced captioning system with speaker identity, voice characteristics, and speech dynamics visualization",
-  "author": "Your Name",
+  "author": "teamKimtaerin",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/teamKimtaerin/ecg-player.git"
+  },
+  "homepage": "https://github.com/teamKimtaerin/ecg-player#readme",
+  "bugs": {
+    "url": "https://github.com/teamKimtaerin/ecg-player/issues"
   },
   "keywords": [
     "caption",
@@ -20,29 +24,26 @@
     "video-player"
   ],
   "type": "module",
-  "main": "./dist/ecg-player.cjs.js",
-  "module": "./dist/ecg-player.es.js",
-  "types": "./dist/types/index.d.ts",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "import": "./dist/ecg-player.es.js",
-      "require": "./dist/ecg-player.cjs.js",
-      "types": "./dist/types/index.d.ts"
-    },
-    "./styles": "./dist/ecg-player.css"
+    ".": "./src/index.ts"
   },
   "files": [
-    "dist",
-    "README.md"
+    "src/**/*",
+    "!src/App.tsx",
+    "!src/main.tsx",
+    "!src/App.css",
+    "!src/index.css",
+    "README.md",
+    "tsconfig.json"
   ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "sync:lib": "cp -r src/components/* src/lib/components/ && echo '✅ Synced development components to library'",
-    "build:lib": "vite build --config vite.config.lib.ts",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "prepublishOnly": "npm run build:lib"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@fontsource-variable/roboto-flex": "^5.2.6",
@@ -63,10 +64,8 @@
     "globals": "^16.3.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "terser": "^5.43.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
-    "vite": "^7.1.2",
-    "vite-plugin-dts": "^3.9.1"
+    "vite": "^7.1.2"
   }
 }
