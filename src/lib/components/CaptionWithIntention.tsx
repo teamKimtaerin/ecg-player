@@ -325,6 +325,8 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
   const [containerSize, setContainerSize] = useState({ width, height });
   const segmentCacheRef = useRef<Map<string, any[][]>>(new Map());
   const currentSegmentIndexRef = useRef<Map<string, number>>(new Map());
+  // 이전 프레임의 세그먼트 인덱스 (세그먼트 변경 감지용)
+  const previousSegmentIndexRef = useRef<Map<string, number>>(new Map());
   // 이벤트별 박스 위치 추적 (event_id -> box_index: 0=상단, 1=하단)
   const eventBoxPositionRef = useRef<Map<string, number>>(new Map());
 
@@ -843,7 +845,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               const allActiveEvents = [currentEvent, ...overlappingEvents];
               
               // 각 이벤트에 대해 세그먼트 처리 및 박스 할당
-              const eventDisplayData: Array<{event: SyncEvent, displayEvent: SyncEvent, assignedBox?: number}> = [];
+              const eventDisplayData: Array<{event: SyncEvent, displayEvent: SyncEvent, assignedBox?: number, segmentChanged?: boolean}> = [];
               
               for (const event of allActiveEvents) {
                 // 세그먼트 처리 (기존 로직 재사용)
@@ -938,35 +940,88 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                     wordsToDisplay = eventSegments[segmentIndex] || [];
                   }
                   
+                  // 세그먼트 변경 감지
+                  const previousSegmentIndex = previousSegmentIndexRef.current.get(eventCacheKey);
+                  const segmentChanged = previousSegmentIndex !== undefined && previousSegmentIndex !== segmentIndex;
+                  
+                  // 현재 세그먼트 인덱스 저장
                   currentSegmentIndexRef.current.set(eventCacheKey, segmentIndex);
+                  previousSegmentIndexRef.current.set(eventCacheKey, segmentIndex);
+                  
+                  // displayEvent 생성
+                  const eventDisplayEvent = {
+                    ...event,
+                    active_speech_words: wordsToDisplay
+                  };
+                  
+                  eventDisplayData.push({
+                    event,
+                    displayEvent: eventDisplayEvent,
+                    segmentChanged
+                  });
+                } else {
+                  // 세그먼트가 없는 경우도 처리
+                  const eventDisplayEvent = {
+                    ...event,
+                    active_speech_words: []
+                  };
+                  
+                  eventDisplayData.push({
+                    event,
+                    displayEvent: eventDisplayEvent,
+                    segmentChanged: false
+                  });
                 }
-                
-                // displayEvent 생성
-                const eventDisplayEvent = {
-                  ...event,
-                  active_speech_words: wordsToDisplay
-                };
-                
-                eventDisplayData.push({
-                  event,
-                  displayEvent: eventDisplayEvent
-                });
               }
               
-              // 박스 할당: 기존 위치가 있으면 유지, 없으면 새로 할당
+              // 박스 할당: 세그먼트 변경 시 재평가, 그 외는 기존 위치 유지
               const boxOccupancy = [false, false]; // [상단, 하단] 점유 상태
               
-              // 1단계: 기존에 박스 위치가 할당된 이벤트들 먼저 배치
+              // 1단계: 세그먼트가 변경되지 않은 기존 이벤트들 먼저 배치
               for (const item of eventDisplayData) {
-                const existingBoxIndex = eventBoxPositionRef.current.get(item.event.event_id);
-                if (existingBoxIndex !== undefined && existingBoxIndex >= 0 && existingBoxIndex <= 1) {
-                  lineGroups[existingBoxIndex] = [item.displayEvent];
-                  boxOccupancy[existingBoxIndex] = true;
-                  item.assignedBox = existingBoxIndex;
+                if (!item.segmentChanged) {
+                  const existingBoxIndex = eventBoxPositionRef.current.get(item.event.event_id);
+                  if (existingBoxIndex !== undefined && existingBoxIndex >= 0 && existingBoxIndex <= 1) {
+                    lineGroups[existingBoxIndex] = [item.displayEvent];
+                    boxOccupancy[existingBoxIndex] = true;
+                    item.assignedBox = existingBoxIndex;
+                  }
                 }
               }
               
-              // 2단계: 새로운 이벤트들을 빈 박스에 할당 (하단 우선)
+              // 2단계: 세그먼트가 변경된 이벤트들 재평가 (하단 우선으로 재배치)
+              for (const item of eventDisplayData) {
+                if (item.segmentChanged) {
+                  const existingBoxIndex = eventBoxPositionRef.current.get(item.event.event_id);
+                  
+                  // 하단이 비어있으면 하단으로, 그렇지 않으면 기존 위치 유지
+                  let newBoxIndex = existingBoxIndex;
+                  if (!boxOccupancy[1]) {
+                    // 하단이 비어있으면 하단으로 이동
+                    newBoxIndex = 1;
+                    // 기존 위치가 상단이었다면 상단에서 제거
+                    if (existingBoxIndex === 0) {
+                      lineGroups[0] = [];
+                      boxOccupancy[0] = false;
+                    }
+                  } else if (existingBoxIndex !== undefined && existingBoxIndex >= 0 && existingBoxIndex <= 1) {
+                    // 하단이 점유되어 있으면 기존 위치 유지
+                    newBoxIndex = existingBoxIndex;
+                  } else {
+                    // 기존 위치가 없고 하단도 점유되어 있으면 상단 시도
+                    newBoxIndex = !boxOccupancy[0] ? 0 : -1;
+                  }
+                  
+                  if (newBoxIndex !== -1) {
+                    lineGroups[newBoxIndex] = [item.displayEvent];
+                    boxOccupancy[newBoxIndex] = true;
+                    eventBoxPositionRef.current.set(item.event.event_id, newBoxIndex);
+                    item.assignedBox = newBoxIndex;
+                  }
+                }
+              }
+              
+              // 3단계: 새로운 이벤트들을 빈 박스에 할당 (하단 우선)
               for (const item of eventDisplayData) {
                 if (item.assignedBox === undefined) {
                   // 하단(1) 먼저 시도, 그 다음 상단(0)
