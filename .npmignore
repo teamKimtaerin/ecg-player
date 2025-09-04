@@ -32,3 +32,13 @@ tests/
 *.test.tsx
 *.spec.ts
 *.spec.tsx
+
+# 개발 도구 및 설정 파일 제외  
+.eslintrc.*
+eslint.config.*
+.prettierrc.*
+.editorconfig
+.nvmrc
+.yarnrc*
+yarn.lock
+package-lock.json
