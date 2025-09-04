@@ -283,10 +283,15 @@ import type {
 
 ### 개발 환경 설정
 
+⚠️ **개발 및 데모를 위해서는 `demo` 브랜치를 사용하세요**
+
 ```bash
 # 레포지토리 클론
 git clone https://github.com/teamKimtaerin/ecg-player.git
 cd ecg-player
+
+# 데모 브랜치로 전환 (개발/테스트용)
+git checkout demo
 
 # 의존성 설치
 npm install
@@ -295,7 +300,7 @@ npm install
 npm run dev
 ```
 
-### 빌드 명령어
+### 빌드 명령어 (`demo` 브랜치에서 실행)
 
 ```bash
 # 개발 서버 실행 (데모 페이지)
@@ -327,31 +332,34 @@ src/
 └── index.ts                  # 라이브러리 진입점 ✅
 ```
 
-#### 개발 환경 전용 (패키지에 포함되지 않음)
+#### 개발 환경 전용 (`demo` 브랜치에만 존재)
 ```
 src/
-├── App.tsx                   # 데모 애플리케이션 🚫
-├── App.css                   # 데모 스타일 🚫
-├── main.tsx                  # Vite 개발 서버 진입점 🚫
-└── index.css                 # 글로벌 스타일 🚫
+├── App.tsx                   # 데모 애플리케이션 (demo 브랜치)
+├── App.css                   # 데모 스타일 (demo 브랜치)
+├── main.tsx                  # Vite 개발 서버 진입점 (demo 브랜치)
+└── index.css                 # 글로벌 스타일 (demo 브랜치)
 
 public/
-└── test-output/              # 테스트 데이터 🚫
+└── test-output/              # 테스트 데이터 (demo 브랜치)
 
 # 설정 파일
 ├── package.json              # GitHub 패키지 최적화
 ├── tsconfig.json             # TypeScript 설정
-├── vite.config.ts            # 개발 서버 설정
+├── vite.config.ts            # 개발 서버 설정 (demo 브랜치)
+├── index.html                # HTML 진입점 (demo 브랜치)
 └── README.md                 # 문서
 ```
 
 **범례**  
-✅ = GitHub 패키지에 포함  
-🚫 = 개발 전용 (패키지에서 제외)
+✅ = main 브랜치 (GitHub 패키지)에 포함  
+📱 = demo 브랜치에만 존재
 
-> **💡 개발 vs 패키지 사용**  
-> - **개발 시**: `npm run dev`로 데모 페이지에서 컴포넌트 테스트
-> - **패키지 사용 시**: 필요한 소스코드만 자동으로 가져와서 사용하는 프로젝트에서 빌드
+> **💡 브랜치 전략**  
+> - **main 브랜치**: 라이브러리 코드만 (외부 프로젝트에서 install)
+> - **demo 브랜치**: 개발 및 테스트 환경 (데모 UI 포함)
+> - **개발 시**: `git checkout demo` 후 `npm run dev`로 데모 페이지 확인
+> - **배포**: main 브랜치가 자동으로 깔끔한 라이브러리만 제공
 
 ## 기술적 요구사항
 
