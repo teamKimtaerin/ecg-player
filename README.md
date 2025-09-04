@@ -31,65 +31,167 @@ npm install github:teamKimtaerin/ecg-player#main
 
 ## 사용법
 
-### 기본 사용
+### 기본 사용 - 자막 데이터 직접 전달
 
 ```tsx
 import React from 'react';
 import { CaptionWithIntention } from 'ecg-player';
+import type { TimingSyncData } from 'ecg-player';
+
+// 자막 데이터
+const subtitleData: TimingSyncData = {
+  version: "1.0",
+  created_at: "2024-01-01T00:00:00Z", 
+  total_duration: 10.0,
+  sync_precision_ms: 50,
+  sync_events: [
+    {
+      event_id: "event_001",
+      speaker_id: "SPEAKER_00",
+      segment_id: "segment_001",
+      sentence: "Hello world!",
+      pre_reading: {
+        text: "Hello world!",
+        start: 0.0,
+        end: 2.0,
+        style: "normal",
+        alpha: "255"
+      },
+      active_speech_words: [
+        {
+          word: "Hello",
+          word_index: 0,
+          start: 0.5,
+          end: 1.0,
+          pronunciation_start: 0.5,
+          color_transition: {
+            from_color: "&H00FFFFFF",
+            to_color: "&H00FFFF00", 
+            duration_ms: 300
+          },
+          font_adjustments: {
+            size_percent: 5,
+            weight: 400,
+            width: 100
+          }
+        }
+      ]
+    }
+  ],
+  global_timing_adjustments: {
+    pre_reading_lead_ms: 500,
+    color_transition_overlap_ms: 100,
+    animation_buffer_ms: 50
+  }
+};
 
 function App() {
   return (
     <CaptionWithIntention
       videoSrc="/path/to/video.mp4"
-      timingSyncSrc="/path/to/timing_sync.json"
+      timingSyncData={subtitleData}
       responsive={true}
     />
   );
 }
 ```
 
-### 고정 크기로 사용
+### 파일 업로드 기능이 포함된 플레이어
 
 ```tsx
-import React from 'react';
+import React, { useState } from 'react';
 import { CaptionWithIntention } from 'ecg-player';
+import type { TimingSyncData } from 'ecg-player';
 
-function VideoPlayer() {
+function VideoPlayerWithUpload() {
+  const [videoSrc, setVideoSrc] = useState<string>('');
+  const [timingSyncData, setTimingSyncData] = useState<TimingSyncData | null>(null);
+
+  const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setVideoSrc(url);
+    }
+  };
+
+  const handleSubtitleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text) as TimingSyncData;
+        setTimingSyncData(data);
+      } catch (error) {
+        console.error('Failed to parse subtitle file:', error);
+      }
+    }
+  };
+
   return (
-    <CaptionWithIntention
-      videoSrc="/path/to/video.mp4"
-      timingSyncSrc="/path/to/timing_sync.json"
-      width={1920}
-      height={1080}
-      responsive={false}
-    />
+    <div>
+      <div style={{ marginBottom: '20px' }}>
+        <input 
+          type="file" 
+          accept="video/*" 
+          onChange={handleVideoUpload}
+          style={{ marginRight: '10px' }}
+        />
+        <input 
+          type="file" 
+          accept=".json" 
+          onChange={handleSubtitleUpload}
+        />
+      </div>
+      
+      {videoSrc && timingSyncData && (
+        <CaptionWithIntention
+          videoSrc={videoSrc}
+          timingSyncData={timingSyncData}
+          responsive={true}
+          syncOffset={0}
+        />
+      )}
+    </div>
   );
 }
 ```
 
-### 동적 데이터 로딩
+### API에서 자막 데이터 로딩
 
 ```tsx
 import React, { useState, useEffect } from 'react';
-import { CaptionWithIntention, TimingSyncData } from 'ecg-player';
+import { CaptionWithIntention } from 'ecg-player';
+import type { TimingSyncData } from 'ecg-player';
 
 function DynamicPlayer() {
   const [timingData, setTimingData] = useState<TimingSyncData | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/timing-sync')
+    fetch('/api/subtitles/123')
       .then(response => response.json())
-      .then(data => setTimingData(data));
+      .then((data: TimingSyncData) => {
+        setTimingData(data);
+        setLoading(false);
+      })
+      .catch(error => {
+        console.error('Failed to load subtitles:', error);
+        setLoading(false);
+      });
   }, []);
 
+  if (loading) return <div>Loading subtitles...</div>;
+  if (!timingData) return <div>Failed to load subtitles</div>;
+
   return (
-    <div style={{ width: '100%', height: '100vh' }}>
-      <CaptionWithIntention
-        videoSrc="/video.mp4"
-        timingSyncData={timingData}
-        responsive={true}
-      />
-    </div>
+    <CaptionWithIntention
+      videoSrc="https://example.com/video.mp4"
+      timingSyncData={timingData}
+      width={800}
+      height={450}
+      responsive={true}
+    />
   );
 }
 ```
@@ -98,14 +200,28 @@ function DynamicPlayer() {
 
 ### CaptionWithIntention Props
 
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `videoSrc` | `string` | - | 비디오 파일 URL 또는 경로 |
-| `timingSyncSrc` | `string` | - | 타이밍 동기화 JSON 파일 URL |
-| `timingSyncData` | `TimingSyncData` | - | 타이밍 동기화 데이터 (직접 전달시) |
-| `width` | `number` | 800 | 플레이어 고정 너비 (responsive=false일 때) |
-| `height` | `number` | 450 | 플레이어 고정 높이 (responsive=false일 때) |
-| `responsive` | `boolean` | true | 반응형 크기 조정 활성화 |
+| Prop | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `videoSrc` | `string` | ✅ | - | 비디오 파일 URL 또는 blob URL |
+| `timingSyncData` | `TimingSyncData` | ✅ | - | Caption With Intention 자막 데이터 |
+| `width` | `number` | ❌ | `800` | 플레이어 고정 너비 (px) |
+| `height` | `number` | ❌ | `450` | 플레이어 고정 높이 (px) |
+| `responsive` | `boolean` | ❌ | `true` | 반응형 크기 조정 활성화 |
+| `syncOffset` | `number` | ❌ | `0` | 자막 동기화 오프셋 (초, 양수=지연, 음수=앞당김) |
+
+### 주요 Functions와 Utilities
+
+```tsx
+// 유틸리티 함수
+import { assColorToCss } from 'ecg-player';
+
+// ASS 색상을 CSS 색상으로 변환
+const cssColor = assColorToCss('&H00FFFF00'); // "#00FFFF"
+
+// 애니메이션 매니저 (고급 사용자용)
+import { GSAPAnimationManager } from 'ecg-player';
+const animationManager = new GSAPAnimationManager();
+```
 
 ### 타이밍 동기화 데이터 형식
 

@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { gsap } from 'gsap';
-import type { TimingSyncData, SyncEvent, Word, CharacterTiming, CaptionWithIntentionProps } from '../types';
+import type { SyncEvent, Word, CharacterTiming, CaptionWithIntentionProps } from '../types';
 
 // ASS 색상을 CSS 색상으로 변환
 const assColorToCss = (assColor: string): string => {
@@ -178,7 +178,7 @@ class GSAPAnimationManager {
 
 export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
   videoSrc,
-  timingSyncSrc,
+  timingSyncData,
   width = 800,
   height = 450,
   responsive = true,
@@ -189,10 +189,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
   const animationFrameRef = useRef<number | undefined>(undefined);
   const animationManagerRef = useRef<GSAPAnimationManager>(new GSAPAnimationManager());
   
-  const [timingData, setTimingData] = useState<TimingSyncData | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [containerSize, setContainerSize] = useState({ width, height });
   const segmentCacheRef = useRef<Map<string, any[][]>>(new Map());
@@ -204,19 +201,19 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
 
   // 현재 시간에 해당하는 이벤트들 찾기 (sync offset 적용)
   const getCurrentEvents = useCallback((time: number) => {
-    if (!timingData) return { preReading: [], activeWords: [], elevations: [] };
+    if (!timingSyncData) return { preReading: [], activeWords: [], elevations: [] };
 
     // Apply sync offset - subtract offset from time to adjust timing
     // If offset is positive (delay), we check earlier times
     // If offset is negative (advance), we check later times
     const adjustedTime = time - syncOffset;
 
-    const preReading = timingData.sync_events.filter(event => 
+    const preReading = timingSyncData.sync_events.filter(event => 
       adjustedTime >= event.pre_reading.start && adjustedTime <= event.pre_reading.end
     );
 
     const activeWords: (Word & { event: SyncEvent })[] = [];
-    timingData.sync_events.forEach(event => {
+    timingSyncData.sync_events.forEach(event => {
       event.active_speech_words.forEach(word => {
         if (adjustedTime >= word.start && adjustedTime <= word.end) {
           activeWords.push({ ...word, event });
@@ -225,17 +222,17 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     });
 
     return { preReading, activeWords };
-  }, [timingData, syncOffset]);
+  }, [timingSyncData, syncOffset]);
 
   // 종료된 이벤트들의 박스 위치 정보 정리
   const cleanupFinishedEvents = useCallback((currentTime: number) => {
-    if (!timingData) return;
+    if (!timingSyncData) return;
     
     const adjustedTime = currentTime - syncOffset;
     const activeEventIds = new Set<string>();
     
     // 현재 활성화된 이벤트들의 ID 수집
-    timingData.sync_events.forEach(event => {
+    timingSyncData.sync_events.forEach(event => {
       const eventStart = event.pre_reading.start;
       const eventEnd = event.pre_reading.end;
       if (adjustedTime >= eventStart && adjustedTime <= eventEnd) {
@@ -256,7 +253,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     keysToDelete.forEach(eventId => {
       currentBoxPositions.delete(eventId);
     });
-  }, [timingData, syncOffset]);
+  }, [timingSyncData, syncOffset]);
 
   // requestVideoFrameCallback을 사용한 프레임 정밀 동기화
   const videoFrameCallbackRef = useRef<number | undefined>(undefined);
@@ -353,35 +350,6 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     };
   }, [isPlaying, updateVideoFrame]);
 
-  // timing_sync.json 로드
-  const loadTimingSync = async (url: string) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data: TimingSyncData = await response.json();
-      setTimingData(data);
-      console.log('Caption With Intention timing data loaded:', data);
-      
-    } catch (error: any) {
-      console.error('Failed to load timing sync data:', error);
-      setError(`Failed to load timing sync data: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // 자동 로드
-  useEffect(() => {
-    if (timingSyncSrc) {
-      loadTimingSync(timingSyncSrc);
-    }
-  }, [timingSyncSrc]);
 
   // 반응형 레이아웃 지원 (ResizeObserver) - 성능 최적화된 버전
   useEffect(() => {
@@ -410,39 +378,6 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     };
   }, [responsive, containerSize.width, containerSize.height]);
 
-  // 파일 업로드 핸들러들
-  const handleVideoFile = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && videoRef.current) {
-      const url = URL.createObjectURL(file);
-      videoRef.current.src = url;
-      console.log('Video file loaded:', file.name);
-    }
-  };
-
-  const handleTimingSyncFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const data: TimingSyncData = JSON.parse(text);
-      setTimingData(data);
-      console.log('Timing sync file loaded:', file.name);
-      setError(null);
-    } catch (error) {
-      console.error('Failed to load timing sync file:', error);
-      setError(`Failed to load timing sync file: ${error}`);
-    }
-  };
-
-  const handleLoadTestTimingSync = async () => {
-    await loadTimingSync('/test-output/generated_timing_sync.json');
-  };
-
-  const handleLoadEnhancedTimingSync = async () => {
-    await loadTimingSync('/test-output/enhanced_timing_sync.json');
-  };
 
   // 현재 표시할 이벤트들 (성능 최적화)
   const currentEvents = useMemo(() => getCurrentEvents(currentTime), [currentTime, getCurrentEvents]);
@@ -516,17 +451,17 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
             style={{
               position: 'absolute',
               bottom: 0,
-              left: timingData?.layout_settings?.work_area?.safety_margins?.left_percent 
-                ? `${timingData.layout_settings.work_area.safety_margins.left_percent * 100}%` 
+              left: timingSyncData?.layout_settings?.work_area?.safety_margins?.left_percent 
+                ? `${timingSyncData.layout_settings.work_area.safety_margins.left_percent * 100}%` 
                 : '5%',
-              right: timingData?.layout_settings?.work_area?.safety_margins?.right_percent 
-                ? `${timingData.layout_settings.work_area.safety_margins.right_percent * 100}%` 
+              right: timingSyncData?.layout_settings?.work_area?.safety_margins?.right_percent 
+                ? `${timingSyncData.layout_settings.work_area.safety_margins.right_percent * 100}%` 
                 : '5%',
-              height: timingData?.layout_settings?.work_area?.bottom_percent 
-                ? `${timingData.layout_settings.work_area.bottom_percent}%` 
+              height: timingSyncData?.layout_settings?.work_area?.bottom_percent 
+                ? `${timingSyncData.layout_settings.work_area.bottom_percent}%` 
                 : '20%',
-              paddingBottom: timingData?.layout_settings?.work_area?.safety_margins?.bottom_percent 
-                ? `${timingData.layout_settings.work_area.safety_margins.bottom_percent * 100}%` 
+              paddingBottom: timingSyncData?.layout_settings?.work_area?.safety_margins?.bottom_percent 
+                ? `${timingSyncData.layout_settings.work_area.safety_margins.bottom_percent * 100}%` 
                 : '2%',
               display: 'flex',
               flexDirection: 'column',
@@ -579,7 +514,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               let segments = segmentCacheRef.current.get(cacheKey);
               if (!segments) {
                 // Work area 기반 caption box 최대 너비 계산
-                const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
+                const safetyMargins = timingSyncData?.layout_settings?.work_area?.safety_margins;
                 // Work area의 실제 너비 계산 (left/right margin 고려)
                 const workAreaWidthPercent = safetyMargins 
                   ? (100 - ((safetyMargins.left_percent ?? 0.05) * 100) - ((safetyMargins.right_percent ?? 0.05) * 100))
@@ -587,7 +522,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
 
                 // Caption box padding 계산
-                const horizontalPadding = timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
+                const horizontalPadding = timingSyncData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
                 const captionBoxPadding = workAreaWidth * (horizontalPadding / 100) * 2; // 양쪽 padding
 
                 // Caption box의 최대 너비 (work area 내에서)
@@ -725,12 +660,12 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 
                 if (!eventSegments) {
                   // Work area 기반 caption box 최대 너비 계산
-                  const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
+                  const safetyMargins = timingSyncData?.layout_settings?.work_area?.safety_margins;
                   const workAreaWidthPercent = safetyMargins 
                     ? (100 - ((safetyMargins.left_percent ?? 0.05) * 100) - ((safetyMargins.right_percent ?? 0.05) * 100))
                     : 90;
                   const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
-                  const horizontalPadding = timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
+                  const horizontalPadding = timingSyncData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
                   const captionBoxPadding = workAreaWidth * (horizontalPadding / 100) * 2;
                   const captionBoxMaxWidth = workAreaWidth - captionBoxPadding;
                   
@@ -915,7 +850,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               // 각 라인별로 개별 caption box 렌더링
               return lineGroups.map((lineEvents, lineIndex) => {
                 if (!lineEvents || lineEvents.length === 0) return null;
-                const captionBox = timingData?.layout_settings?.caption_boxes?.[lineIndex];
+                const captionBox = timingSyncData?.layout_settings?.caption_boxes?.[lineIndex];
                 if (!captionBox) return null;
                 
                 // Caption box maxWidth: work_area의 100% 사용
@@ -938,14 +873,14 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                       alignItems: 'flex-end', // 하단 고정으로 baseline 유지
                       justifyContent: 'center', // Horizontal center
                       flexWrap: 'nowrap', // No wrapping
-                      backgroundColor: `rgba(0, 0, 0, ${(timingData?.layout_settings?.caption_box_style?.background_opacity ?? 90) / 100})`,
-                      borderRadius: `${timingData?.layout_settings?.caption_box_style?.border_radius ?? 0}px`,
-                      padding: `${actualSize.height * (timingData?.layout_settings?.caption_box_style?.padding?.vertical_percent ?? 2.5) / 100}px ${actualSize.width * (timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5) / 100}px`,
+                      backgroundColor: `rgba(0, 0, 0, ${(timingSyncData?.layout_settings?.caption_box_style?.background_opacity ?? 90) / 100})`,
+                      borderRadius: `${timingSyncData?.layout_settings?.caption_box_style?.border_radius ?? 0}px`,
+                      padding: `${actualSize.height * (timingSyncData?.layout_settings?.caption_box_style?.padding?.vertical_percent ?? 2.5) / 100}px ${actualSize.width * (timingSyncData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5) / 100}px`,
                       boxSizing: 'border-box',
                       overflow: 'visible', // 애니메이션이 box를 벗어나도록 허용
                       zIndex: lineIndex === 0 ? 1 : 2, // 하단 box가 상단보다 위에 오도록
                       fontFamily: '"Roboto Flex Variable", "Roboto Flex", sans-serif',
-                      fontSize: `${(timingData?.layout_settings?.caption_box_style?.baseline_font_size_percent ?? 5) * (actualSize.height / 100)}px`,
+                      fontSize: `${(timingSyncData?.layout_settings?.caption_box_style?.baseline_font_size_percent ?? 5) * (actualSize.height / 100)}px`,
                       color: 'white',
                       lineHeight: 1, // 글자 크기 증가가 위로만 확장되도록
                       textAlign: 'center',
@@ -981,7 +916,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                         ? assColorToCss(wordData.color_transition.to_color) 
                         : 'rgba(255, 255, 255, 0.9)';
                       
-                      const baselineSize = (timingData?.layout_settings?.caption_box_style?.baseline_font_size_percent ?? 4.5) * (actualSize.height / 100);
+                      const baselineSize = (timingSyncData?.layout_settings?.caption_box_style?.baseline_font_size_percent ?? 4.5) * (actualSize.height / 100);
                       // Apply font size scaling for whisper and loud animation types
                       let fontSize = baselineSize;
                       if (wordData.animation_type === 'whisper' && config.font_size_percent) {
@@ -1287,120 +1222,6 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               });
             })()}
           </div>
-        </div>
-      </div>
-      
-      {/* 상태 및 에러 표시 */}
-      {error && (
-        <div style={{
-          marginTop: '10px',
-          padding: '10px',
-          backgroundColor: 'rgba(220, 53, 69, 0.1)',
-          border: '1px solid #dc3545',
-          borderRadius: '5px',
-          color: '#dc3545'
-        }}>
-          <strong>Error:</strong> {error}
-        </div>
-      )}
-
-      <div style={{
-        marginTop: '10px',
-        padding: '10px',
-        backgroundColor: 'rgba(40, 167, 69, 0.1)',
-        border: '1px solid #28a745',
-        borderRadius: '5px',
-        color: '#28a745'
-      }}>
-        <strong>Status:</strong> {
-          isLoading ? 'Loading timing data...' :
-          timingData ? `Caption With Intention Ready (${timingData.sync_events.length} events)` :
-          'No timing data loaded'
-        }
-      </div>
-
-      {/* 디버그 정보 */}
-      <div style={{
-        marginTop: '10px',
-        padding: '10px',
-        backgroundColor: 'rgba(108, 117, 125, 0.1)',
-        border: '1px solid #6c757d',
-        borderRadius: '5px',
-        color: '#6c757d',
-        fontSize: '12px'
-      }}>
-        <strong>Debug:</strong> Time: {currentTime.toFixed(2)}s | 
-        Pre-reading: {currentEvents.preReading.length} | 
-        Active words: {currentEvents.activeWords.length}
-      </div>
-      
-      {/* 컨트롤 */}
-      <div className="controls" style={{ marginTop: '20px' }}>
-        <div style={{ marginBottom: '10px' }}>
-          <label>
-            Video File: 
-            <input 
-              type="file" 
-              accept="video/*" 
-              onChange={handleVideoFile}
-              style={{ marginLeft: '10px' }}
-            />
-          </label>
-        </div>
-        <div style={{ marginBottom: '10px' }}>
-          <label>
-            Timing Sync JSON File: 
-            <input 
-              type="file" 
-              accept=".json" 
-              onChange={handleTimingSyncFile}
-              style={{ marginLeft: '10px' }}
-            />
-          </label>
-        </div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleLoadTestTimingSync}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '0.9rem'
-            }}
-          >
-            Load Basic Test
-          </button>
-          <button
-            onClick={handleLoadEnhancedTimingSync}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: 'bold'
-            }}
-          >
-            🎯 Load Enhanced CwI
-          </button>
-        </div>
-        
-        <div style={{ marginTop: '15px', fontSize: '0.9rem', color: '#666' }}>
-          <p><strong>Caption With Intention</strong> - 업계 표준 디자인 시스템</p>
-          <p>🎯 <strong>Enhanced CwI</strong>: 실제 음성 분석 기반 정밀 타이포그래피</p>
-          <ul style={{ fontSize: '0.8rem', marginTop: '5px', paddingLeft: '20px' }}>
-            <li>Volume → Font Size (3-12% 범위)</li>
-            <li>Pitch → Font Weight (160-710 범위)</li>
-            <li>Harmonics → Font Width (75-150% 범위)</li>
-            <li>3-화자 색상 시스템: 시안/빨강/초록</li>
-            <li>Special Effects: Loud Voice (240% scale) / Whisper (60% scale)</li>
-            <li>25% Elevation Effect for dramatic speech</li>
-          </ul>
         </div>
       </div>
     </div>

@@ -118,8 +118,8 @@ export interface ElevationEffect {
 }
 
 export interface CaptionWithIntentionProps {
-  videoSrc?: string;
-  timingSyncSrc?: string;
+  videoSrc: string;
+  timingSyncData: TimingSyncData;
   width?: number;
   height?: number;
   responsive?: boolean;

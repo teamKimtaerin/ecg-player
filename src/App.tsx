@@ -1,5 +1,5 @@
 import './App.css'
-import CaptionWithIntention from './components/CaptionWithIntention'
+import CaptionWithIntentionDemo from './components/CaptionWithIntentionDemo'
 
 function App() {
   return (
@@ -10,7 +10,7 @@ function App() {
       </header>
       
       <main>
-        <CaptionWithIntention />
+        <CaptionWithIntentionDemo />
       </main>
       
       <footer style={{ marginTop: '40px', textAlign: 'center', opacity: 0.6 }}>
