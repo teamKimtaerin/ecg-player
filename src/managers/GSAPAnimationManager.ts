@@ -1,6 +1,5 @@
 import { gsap } from 'gsap';
-import { Word } from '../types';
-import { assColorToCss } from '../utils';
+import type { Word } from '../types';
 
 // GSAP 기반 애니메이션 관리자 클래스
 export class GSAPAnimationManager {
@@ -19,10 +18,9 @@ export class GSAPAnimationManager {
     element: HTMLElement,
     charIndex: number,
     wordLength: number,
-    popAnimationData: Word['pop_animation'],
+    _popAnimationData: Word['pop_animation'] | undefined,
     bouncingAnimation: Word['bouncing_animation'],
     screenHeight: number,
-    elevationHeight: number = 0,
     char: string = '',
     wordText: string = '',
     startTime: number = 0
@@ -52,7 +50,9 @@ export class GSAPAnimationManager {
     const phaseOffset = (Math.PI * 2) / wordLength; // 각 글자 간 위상 차이
     const charPhase = charIndex * phaseOffset; // 이 글자의 초기 위상
     
-    const animationDuration = (popAnimationData.scale_up_duration_ms + popAnimationData.scale_down_duration_ms) / 1000;
+    const animationDuration = _popAnimationData 
+      ? (_popAnimationData.scale_up_duration_ms + _popAnimationData.scale_down_duration_ms) / 1000
+      : 0.5;
     
     // Get pre-roll and peak position from bouncing animation config
     const preRoll = (bouncingAnimation as any).pre_roll_ms ? (bouncingAnimation as any).pre_roll_ms / 1000 : 0;
@@ -91,7 +91,6 @@ export class GSAPAnimationManager {
 
   createColorTransition(
     element: HTMLElement,
-    fromColor: string,
     toColor: string,
     duration: number
   ): gsap.core.Timeline {
@@ -104,7 +103,9 @@ export class GSAPAnimationManager {
 
     const timeline = gsap.timeline({
       paused: true,
-      onComplete: () => this.activeAnimations.delete(animationId)
+      onComplete: () => {
+        this.activeAnimations.delete(animationId);
+      }
     });
 
     // GSAP의 부드러운 색상 전환
@@ -129,7 +130,7 @@ export class GSAPAnimationManager {
       const elapsed = videoTime - startTime;
       
       // Include pre-roll in the animation timeline
-      const totalDuration = duration + preRoll;
+      // const totalDuration = duration + preRoll;
       const adjustedElapsed = elapsed + preRoll;
       
       if (elapsed >= -preRoll && elapsed <= duration) {

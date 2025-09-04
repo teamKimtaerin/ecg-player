@@ -1,127 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { gsap } from 'gsap';
-
-// Caption With Intention 타이밍 동기화 데이터 타입
-interface TimingSyncData {
-  version: string;
-  created_at: string;
-  total_duration: number;
-  sync_precision_ms: number;
-  layout_settings?: {
-    work_area: {
-      bottom_percent: number;
-      caption_layout?: any;
-      safety_margins: any;
-    };
-    caption_boxes: Array<{
-      line_index: number;
-      bottom_position: number;
-      height: number;
-      style: string;
-    }>;
-    box_spacing: number;
-    rendering: string;
-    individual_box: boolean;
-  };
-  sync_events: SyncEvent[];
-  global_timing_adjustments: {
-    pre_reading_lead_ms: number;
-    color_transition_overlap_ms: number;
-    animation_buffer_ms: number;
-  };
-}
-
-interface SyncEvent {
-  event_id: string;
-  speaker_id: string;
-  segment_id: string;
-  sentence: string;
-  pre_reading: {
-    text: string;
-    start: number;
-    end: number;
-    style: string;
-    alpha: string;
-  };
-  active_speech_words: Word[];
-}
-
-export interface CharacterTiming {
-  character: string;
-  char_index: number;
-  start_time: number;
-  end_time: number;
-  peak_time?: number;  // Time when the wave reaches its peak
-  relative_delay: number;
-}
-
-interface Word {
-  word: string;
-  word_index: number;
-  start: number;
-  end: number;
-  pronunciation_start: number;
-  color_transition: {
-    from_color: string;
-    to_color: string;
-    duration_ms: number;
-  };
-  // New unified animation system
-  animation_type?: "bouncing" | "elevation" | "whisper" | "loud" | "normal";
-  animation_config?: {
-    scale_percent?: number;       // Overall scale (100 = normal)
-    duration_ms?: number;         // Animation duration
-    wave_enabled?: boolean;       // Enable wave effect
-    wave_height_range?: {         // Wave amplitude
-      min: number;
-      max: number;
-    };
-    position_y?: number;          // Y-axis movement (pixels)
-    opacity?: number;             // Opacity (0-1)
-    blur?: number;                // Blur amount (pixels)
-    font_scale?: number;          // Font size multiplier
-    trembling?: boolean;          // Trembling effect for elevation
-    character_delay_ms?: number;  // Delay between characters
-    character_timings?: CharacterTiming[];  // Character-level timing for wave effect
-  };
-  font_adjustments: {
-    size_percent: number;
-    weight: number;
-    width: number;
-  };
-  // Legacy fields - to be removed after full migration
-  pop_animation?: {
-    start: number;
-    scale_up_duration_ms: number;
-    scale_down_duration_ms: number;
-    max_scale_percent: number;
-  };
-  bouncing_animation?: {
-    enabled: boolean;
-    scale_increase_percent?: number;
-    min_height_percent: number;
-    max_height_percent: number;
-    character_delay_ms: number;
-    wave_pattern: string;
-    wave_cycles?: number;
-    character_timings?: CharacterTiming[];
-  };
-  special_effects?: {
-    loud_voice?: boolean;
-    whisper_voice?: boolean;
-    base_scale?: number;
-  };
-}
-
-
-interface CaptionWithIntentionProps {
-  videoSrc?: string;
-  timingSyncSrc?: string;
-  width?: number;
-  height?: number;
-  responsive?: boolean;
-  syncOffset?: number; // Sync offset in seconds (positive delays, negative advances)
-}
+import type { TimingSyncData, SyncEvent, Word, CharacterTiming, CaptionWithIntentionProps } from '../types';
 
 // ASS 색상을 CSS 색상으로 변환
 const assColorToCss = (assColor: string): string => {
@@ -142,17 +21,14 @@ const assColorToCss = (assColor: string): string => {
 class GSAPAnimationManager {
   private activeAnimations = new Map<string, gsap.core.Timeline>();
   private waveAnimations = new Map<string, { element: HTMLElement, charPhase: number, bounceRange: number, startTime: number, duration: number, waveCycles: number, pronunciationStart: number, charTiming?: CharacterTiming }>();
-  private videoRef: React.RefObject<HTMLVideoElement | null> | null = null;
-  private isPaused = false;
 
   createBouncingAnimation(
     element: HTMLElement,
     charIndex: number,
     wordLength: number,
-    popAnimationData: Word['pop_animation'] | undefined,
+    _popAnimationData: Word['pop_animation'] | undefined,
     bouncingAnimation: Word['bouncing_animation'],
     screenHeight: number,
-    elevationHeight: number = 0,
     startTime: number = 0,
     wordDuration: number = 0.5,
     pronunciationStart: number = 0,
@@ -216,7 +92,6 @@ class GSAPAnimationManager {
 
   createColorTransition(
     element: HTMLElement,
-    fromColor: string,
     toColor: string,
     duration: number
   ): gsap.core.Timeline {
@@ -229,7 +104,9 @@ class GSAPAnimationManager {
 
     const timeline = gsap.timeline({
       paused: true,
-      onComplete: () => this.activeAnimations.delete(animationId)
+      onComplete: () => {
+        this.activeAnimations.delete(animationId);
+      }
     });
 
     // GSAP의 부드러운 색상 전환
@@ -247,9 +124,6 @@ class GSAPAnimationManager {
     this.activeAnimations.get(animationId)?.play();
   }
 
-  setVideoRef(ref: React.RefObject<HTMLVideoElement | null>) {
-    this.videoRef = ref;
-  }
 
   // 비디오 시간 기반으로 웨이브 애니메이션 업데이트
   updateWaveAnimations(videoTime: number) {
@@ -287,13 +161,11 @@ class GSAPAnimationManager {
   }
   
   pauseAll() {
-    this.isPaused = true;
     // 모든 active GSAP timelines 일시정지
     this.activeAnimations.forEach(timeline => timeline.pause());
   }
 
   resumeAll() {
-    this.isPaused = false;
     // 모든 active GSAP timelines 재개
     this.activeAnimations.forEach(timeline => timeline.resume());
   }
@@ -314,7 +186,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | undefined>(undefined);
   const animationManagerRef = useRef<GSAPAnimationManager>(new GSAPAnimationManager());
   
   const [timingData, setTimingData] = useState<TimingSyncData | null>(null);
@@ -375,7 +247,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     const currentBoxPositions = eventBoxPositionRef.current;
     const keysToDelete: string[] = [];
     
-    currentBoxPositions.forEach((boxIndex, eventId) => {
+    currentBoxPositions.forEach((_boxIndex, eventId) => {
       if (!activeEventIds.has(eventId)) {
         keysToDelete.push(eventId);
       }
@@ -387,9 +259,9 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
   }, [timingData, syncOffset]);
 
   // requestVideoFrameCallback을 사용한 프레임 정밀 동기화
-  const videoFrameCallbackRef = useRef<number>();
+  const videoFrameCallbackRef = useRef<number | undefined>(undefined);
   
-  const updateVideoFrame = useCallback((now: DOMHighResTimeStamp, metadata: any) => {
+  const updateVideoFrame = useCallback((_now: DOMHighResTimeStamp, _metadata?: any) => {
     const video = videoRef.current;
     if (!video) return;
     
@@ -420,8 +292,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
     const video = videoRef.current;
     if (!video) return;
 
-    // Animation Manager에 video ref 설정
-    animationManagerRef.current.setVideoRef(videoRef);
+    // Animation Manager initialization
 
     const handlePlay = () => {
       setIsPlaying(true);
@@ -453,7 +324,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
       videoFrameCallbackRef.current = (video as any).requestVideoFrameCallback(updateVideoFrame);
     } else if (isPlaying) {
       // Fallback to requestAnimationFrame if requestVideoFrameCallback not available
-      const fallbackUpdate = () => {
+      const fallbackUpdate = (_timestamp: number) => {
         if (videoRef.current && isPlaying) {
           setCurrentTime(videoRef.current.currentTime);
           animationManagerRef.current.updateWaveAnimations(videoRef.current.currentTime);
@@ -711,7 +582,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
                 // Work area의 실제 너비 계산 (left/right margin 고려)
                 const workAreaWidthPercent = safetyMargins 
-                  ? (100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100))
+                  ? (100 - ((safetyMargins.left_percent ?? 0.05) * 100) - ((safetyMargins.right_percent ?? 0.05) * 100))
                   : 90;
                 const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
 
@@ -724,7 +595,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 
                 // 세그먼트 분할
                 segments = [];
-                let currentSegment = [];
+                let currentSegment: Word[] = [];
                 let estimatedWidth = 0;
                 const fontSize = 5 * (actualSize.height / 100);
                 const charWidth = fontSize * 0.6; // 대략적인 문자 너비
@@ -753,7 +624,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               }
               
               // 현재 표시할 세그먼트 결정
-              let wordsToDisplay = [];
+              let wordsToDisplay: Word[] = [];
               let currentSegmentIndex = 0;
               
               if (segments && segments.length > 0) {
@@ -841,8 +712,8 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
               lineGroups[0] = []; // 상단 box 초기화
               lineGroups[1] = []; // 하단 box 초기화
               
-              // 현재 활성화된 모든 이벤트 수집
-              const allActiveEvents = [currentEvent, ...overlappingEvents];
+              // 현재 활성화된 모든 이벤트 수집  
+              const allActiveEvents = [displayEvent, ...overlappingEvents];
               
               // 각 이벤트에 대해 세그먼트 처리 및 박스 할당
               const eventDisplayData: Array<{event: SyncEvent, displayEvent: SyncEvent, assignedBox?: number, segmentChanged?: boolean}> = [];
@@ -856,7 +727,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                   // Work area 기반 caption box 최대 너비 계산
                   const safetyMargins = timingData?.layout_settings?.work_area?.safety_margins;
                   const workAreaWidthPercent = safetyMargins 
-                    ? (100 - (safetyMargins.left_percent * 100) - (safetyMargins.right_percent * 100))
+                    ? (100 - ((safetyMargins.left_percent ?? 0.05) * 100) - ((safetyMargins.right_percent ?? 0.05) * 100))
                     : 90;
                   const workAreaWidth = actualSize.width * (workAreaWidthPercent / 100);
                   const horizontalPadding = timingData?.layout_settings?.caption_box_style?.padding?.horizontal_percent ?? 3.5;
@@ -865,7 +736,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                   
                   // 세그먼트 분할
                   eventSegments = [];
-                  let currentSegment = [];
+                  let currentSegment: Word[] = [];
                   let estimatedWidth = 0;
                   const fontSize = 5 * (actualSize.height / 100);
                   const charWidth = fontSize * 0.6;
@@ -891,7 +762,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                 }
                 
                 // 현재 세그먼트 결정 (기존 로직 재사용)
-                let wordsToDisplay = [];
+                let eventWordsToDisplay: Word[] = [];
                 let segmentIndex = 0;
                 
                 if (eventSegments && eventSegments.length > 0) {
@@ -908,7 +779,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                     if (firstWordOfFirstSegment && adjustedTimeForEvent < firstWordOfFirstSegment.start) {
                       segmentIndex = 0;
                     }
-                    wordsToDisplay = eventSegments[segmentIndex] || [];
+                    eventWordsToDisplay = eventSegments[segmentIndex] || [];
                   } else {
                     let foundSegmentIndex = -1;
                     for (let i = 0; i < eventSegments.length; i++) {
@@ -937,7 +808,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                         segmentIndex = 0;
                       }
                     }
-                    wordsToDisplay = eventSegments[segmentIndex] || [];
+                    eventWordsToDisplay = eventSegments[segmentIndex] || [];
                   }
                   
                   // 세그먼트 변경 감지
@@ -951,7 +822,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                   // displayEvent 생성
                   const eventDisplayEvent = {
                     ...event,
-                    active_speech_words: wordsToDisplay
+                    active_speech_words: eventWordsToDisplay
                   };
                   
                   eventDisplayData.push({
@@ -1185,7 +1056,6 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                                   wordData={{...wordData, bouncing_animation: bouncingConfig}}
                                   currentTime={currentTime}
                                   screenHeight={actualSize.height}
-                                  elevationHeight={0}
                                   animationManager={animationManagerRef.current}
                                   syncOffset={syncOffset}
                                 />
@@ -1391,9 +1261,7 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                           }
                           
                           // 발화 중이거나 발화 완료된 글자는 애니메이션 적용
-                          const elevationHeight = isElevating && elevationWord.move_animation 
-                            ? elevationWord.move_animation.to_y * (actualSize.height / 1080) 
-                            : 0;
+                          // const elevationHeight = 0; // Elevation feature temporarily disabled
                           
                           return (
                             <CharacterWithBounce
@@ -1404,7 +1272,6 @@ export const CaptionWithIntention: React.FC<CaptionWithIntentionProps> = ({
                               wordData={wordData}
                               currentTime={currentTime}
                               screenHeight={actualSize.height}
-                              elevationHeight={elevationHeight}
                               animationManager={animationManagerRef.current}
                               syncOffset={syncOffset}
                             />
@@ -1548,10 +1415,9 @@ const CharacterWithBounce: React.FC<{
   wordData: Word;
   currentTime: number;
   screenHeight: number;
-  elevationHeight: number;
   animationManager: GSAPAnimationManager;
   syncOffset?: number;
-}> = ({ id, char, charIndex, wordData, currentTime, screenHeight, elevationHeight, animationManager, syncOffset = 0 }) => {
+}> = ({ id, char, charIndex, wordData, currentTime, screenHeight, animationManager, syncOffset = 0 }) => {
   const charRef = useRef<HTMLSpanElement>(null);
   const lastAnimationTimeRef = useRef<number>(-1);
   const lastColorTransitionRef = useRef<number>(-1);
@@ -1600,7 +1466,6 @@ const CharacterWithBounce: React.FC<{
         undefined, // pop_animation removed
         wordData.bouncing_animation,
         screenHeight,
-        elevationHeight,
         charStartTime,  // Use character start time instead of word start
         charDuration,   // Use character duration
         wordData.pronunciation_start,
@@ -1608,7 +1473,7 @@ const CharacterWithBounce: React.FC<{
       );
       animation.play();
     }
-  }, [currentTime, wordData.start, wordData.end, wordData.pronunciation_start, wordData.bouncing_animation, wordData.word.length, charIndex, screenHeight, elevationHeight, animationManager, syncOffset]); // 강화된 의존성
+  }, [currentTime, wordData.start, wordData.end, wordData.pronunciation_start, wordData.bouncing_animation, wordData.word.length, charIndex, screenHeight, animationManager, syncOffset]); // 강화된 의존성
   
   // 색상 전환 애니메이션 (글자 단위)
   useEffect(() => {
@@ -1630,7 +1495,6 @@ const CharacterWithBounce: React.FC<{
       
       const colorAnimation = animationManager.createColorTransition(
         charElement,
-        wordData.color_transition.from_color,
         assColorToCss(wordData.color_transition.to_color),
         wordData.color_transition.duration_ms
       );
