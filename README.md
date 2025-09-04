@@ -22,6 +22,16 @@ yarn add github:teamKimtaerin/ecg-player
 npm install github:teamKimtaerin/ecg-player
 ```
 
+⚠️ **중요**: 다른 프로젝트에서 사용할 때는 반드시 `CaptionWithIntention` 컴포넌트만 import하세요. 데모 컴포넌트는 라이브러리에 포함되지 않습니다.
+
+```tsx
+// ✅ 올바른 사용법
+import { CaptionWithIntention } from 'ecg-player';
+
+// ❌ 잘못된 사용법 (데모 컴포넌트는 export되지 않음)
+import { CaptionWithIntentionDemo } from 'ecg-player';
+```
+
 ### 특정 브랜치/태그 설치
 
 ```bash

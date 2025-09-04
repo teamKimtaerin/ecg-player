@@ -31,11 +31,12 @@
     ".": "./src/index.ts"
   },
   "files": [
-    "src/**/*",
-    "!src/App.tsx",
-    "!src/main.tsx",
-    "!src/App.css",
-    "!src/index.css",
+    "src/index.ts",
+    "src/components/CaptionWithIntention.tsx",
+    "src/managers/GSAPAnimationManager.ts",
+    "src/types/index.ts",
+    "src/utils/index.ts",
+    "src/fontsource-variable.d.ts",
     "README.md",
     "tsconfig.json"
   ],
